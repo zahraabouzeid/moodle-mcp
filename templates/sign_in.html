@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in to Moodle{% endblock %}
+
+{% block head %}<script src="/oauth/moodle/automatic.js" defer></script>{% endblock %}
+
+{% block content %}
+<div class="stack">
+  <div class="intro">
+    <h1>Sign in to Moodle</h1>
+    <p class="muted">On a computer, allow this site to open the link when the browser asks. The sign-in then finishes by itself.</p>
+  </div>
+
+  {% if let Some(error) = error %}
+  <p class="error" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <a class="button primary" id="sign-in" href="{{ launch }}" target="_blank" rel="noreferrer">Sign in to Moodle</a>
+
+  <form class="stack" method="post" action="/oauth/moodle/finish">
+    <input type="hidden" name="attempt" value="{{ attempt }}">
+    <label class="field">
+      <span>Link from Moodle</span>
+      <input name="link" autocomplete="off" autocapitalize="none" spellcheck="false">
+    </label>
+    <p class="help">On a phone, Moodle shows a link after signing in. Press and hold it, copy it and paste it here. A key from the security keys in the Moodle preferences works too. Stored encrypted.</p>
+    <button class="outline">Connect</button>
+  </form>
+</div>
+{% endblock %}

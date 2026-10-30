@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{% endblock %}</title>
+    <style>{% include "style.css" %}</style>
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <main>
+      <div class="column">
+        <header>
+          <span class="brand">{% include "icon.svg" %}Moodle</span>
+          <p class="host">{{ server }}</p>
+        </header>
+        <div class="card">
+          {% block content %}{% endblock %}
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
