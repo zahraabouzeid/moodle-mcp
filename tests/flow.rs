@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::Body;
@@ -92,6 +93,24 @@ async fn moodle(request: ServiceRequest) -> Response {
                 {"id": 1, "name": "Sheet 1", "duedate": 1760000000},
                 {"id": 2, "name": "Bonus", "duedate": 0}]}]}"#,
         ),
+        "mod_forum_get_forums_by_courses" => json_answer(
+            r#"[{"id": 3, "course": 7, "type": "news"}, {"id": 4, "course": 7, "type": "general"}]"#,
+        ),
+        "mod_forum_get_forum_discussions" => {
+            assert_eq!(form["forumid"], "3");
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("a time")
+                .as_secs();
+            json_answer(&format!(
+                r#"{{"discussions": [
+                    {{"subject": "Tutorial moved", "message": "<p>Now in H01.</p>",
+                      "created": {recent}, "userfullname": "Prof. A"}},
+                    {{"subject": "Welcome", "message": "<p>Hello</p>", "created": 1700000000}}],
+                  "warnings": []}}"#,
+                recent = now - 3600
+            ))
+        }
         other => panic!("an unexpected function: {other}"),
     }
 }
@@ -510,6 +529,13 @@ async fn a_connected_app_reads_courses_files_and_assignments() {
     assert_eq!(list[0]["due_at"], "2025-10-09T08:53:20+00:00");
     assert!(list[1].get("due_at").is_none());
 
+    let news = server.tool(&token, "list_announcements", json!({})).await;
+    assert_eq!(news["isError"], false, "{news}");
+    let list = &news["structuredContent"]["announcements"];
+    assert_eq!(list.as_array().map(Vec::len), Some(1), "{news}");
+    assert_eq!(list[0]["subject"], "Tutorial moved");
+    assert_eq!(list[0]["text"], "Now in H01.");
+
     let files = server
         .tool(&token, "list_course_files", json!({"course_id": 7}))
         .await;
@@ -572,7 +598,7 @@ async fn the_login_is_not_stored_readable_and_the_tools_are_read_only() {
     let (_, _, text) = server.call(request).await;
     let listed: Value = serde_json::from_str(&text).expect("json");
     let tools = listed["result"]["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 4);
+    assert_eq!(tools.len(), 5);
     for tool in tools {
         assert_eq!(tool["annotations"]["readOnlyHint"], true, "{tool}");
     }

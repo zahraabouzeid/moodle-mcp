@@ -17,6 +17,7 @@ const REST_PATH: &str = "webservice/rest/server.php";
 const FILE_PATH: &str = "webservice/pluginfile.php/";
 const LAUNCH_PATH: &str = "admin/tool/mobile/launch.php";
 const MAX_ANSWER_BYTES: usize = 20 * 1024 * 1024;
+const ANNOUNCEMENTS_PER_FORUM: u32 = 10;
 const REJECTED: &str = "Moodle refused this login, which has probably expired. Connect it again \
     in the LLM client.";
 const NOT_MOODLE: &str = "No Moodle answered at this address. Check the address.";
@@ -121,8 +122,42 @@ pub struct Assignment {
     pub due_at: Option<String>,
 }
 
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Announcement {
+    pub course_id: u64,
+    pub subject: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// In UTC.
+    pub posted_at: String,
+    pub text: String,
+}
+
 mod wire {
     use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Forum {
+        pub id: u64,
+        pub course: u64,
+        #[serde(rename = "type")]
+        pub kind: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Discussions {
+        #[serde(default)]
+        pub discussions: Vec<Discussion>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Discussion {
+        pub subject: String,
+        #[serde(default)]
+        pub message: String,
+        pub created: i64,
+        pub userfullname: Option<String>,
+    }
 
     #[derive(Deserialize)]
     pub struct SiteInfo {
@@ -254,6 +289,60 @@ fn assignments(result: wire::Assignments) -> Vec<Assignment> {
     all
 }
 
+/// Forum posts arrive as HTML. Block ends become line breaks, other tags go.
+fn plain_text(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        text.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find('>') else {
+            rest = &rest[start..];
+            break;
+        };
+        let tag = rest[start + 1..start + end].to_ascii_lowercase();
+        let name = tag.trim_start_matches('/').split([' ', '/']).next();
+        if matches!(
+            name,
+            Some("br" | "p" | "div" | "li" | "tr" | "h1" | "h2" | "h3" | "h4")
+        ) {
+            text.push('\n');
+        }
+        rest = &rest[start + end + 1..];
+    }
+    text.push_str(rest);
+    let text = text
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines
+        .split(|line| line.is_empty())
+        .filter(|block| !block.is_empty())
+        .map(|block| block.join("\n"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn announcements(course_id: u64, discussions: wire::Discussions, since: i64) -> Vec<Announcement> {
+    discussions
+        .discussions
+        .into_iter()
+        .filter(|discussion| discussion.created >= since)
+        .filter_map(|discussion| {
+            Some(Announcement {
+                course_id,
+                subject: discussion.subject,
+                author: discussion.userfullname,
+                posted_at: DateTime::from_timestamp(discussion.created, 0)?.to_rfc3339(),
+                text: plain_text(&discussion.message),
+            })
+        })
+        .collect()
+}
+
 pub struct MoodleClient {
     http: reqwest::Client,
     moodle: Url,
@@ -382,6 +471,36 @@ impl MoodleClient {
         };
         let result: wire::Assignments = self.call("mod_assign_get_assignments", &args).await?;
         Ok(assignments(result))
+    }
+
+    /// Posts in the announcement forums ("news" in Moodle) since a Unix time,
+    /// newest first. Without a course, Moodle returns the forums of all courses.
+    pub async fn announcements(
+        &self,
+        course_id: Option<u64>,
+        since: i64,
+    ) -> Result<Vec<Announcement>> {
+        let args = match course_id {
+            Some(id) => vec![("courseids[0]".to_owned(), id.to_string())],
+            None => Vec::new(),
+        };
+        let forums: Vec<wire::Forum> = self.call("mod_forum_get_forums_by_courses", &args).await?;
+        let mut all = Vec::new();
+        for forum in forums.into_iter().filter(|forum| forum.kind == "news") {
+            let discussions: wire::Discussions = self
+                .call(
+                    "mod_forum_get_forum_discussions",
+                    &[
+                        ("forumid".into(), forum.id.to_string()),
+                        ("page".into(), "0".into()),
+                        ("perpage".into(), ANNOUNCEMENTS_PER_FORUM.to_string()),
+                    ],
+                )
+                .await?;
+            all.extend(announcements(forum.course, discussions, since));
+        }
+        all.sort_by(|a, b| b.posted_at.cmp(&a.posted_at));
+        Ok(all)
     }
 
     /// The token is appended to this URL, so it has to be on this Moodle.
@@ -569,6 +688,36 @@ mod tests {
         assert_eq!(list[0].due_at.as_deref(), Some("2025-10-09T08:53:20+00:00"));
         assert_eq!(list[1].due_at, None);
         assert_eq!(list[1].course_id, 7);
+    }
+
+    #[test]
+    fn forum_html_becomes_plain_text() {
+        assert_eq!(
+            plain_text("<p>Tutorial moved to <b>H01</b>.</p><p>Q&amp;A on Friday</p>"),
+            "Tutorial moved to H01.\n\nQ&A on Friday"
+        );
+        assert_eq!(plain_text("line one<br/>line two"), "line one\nline two");
+        assert_eq!(plain_text("a &lt; b &nbsp;"), "a < b");
+        assert_eq!(plain_text("broken <tag"), "broken <tag");
+    }
+
+    #[test]
+    fn only_announcements_since_the_given_time_are_kept() {
+        let body = br#"{"discussions":[
+            {"subject":"Exam date","message":"<p>On 12 Feb</p>","created":1760000000,"userfullname":"Prof. A"},
+            {"subject":"Welcome","message":"","created":1700000000}],"warnings":[]}"#;
+        let list = announcements(
+            7,
+            decode(body)
+                .map_err(|_| "not decoded")
+                .expect("discussions"),
+            1750000000,
+        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].subject, "Exam date");
+        assert_eq!(list[0].text, "On 12 Feb");
+        assert_eq!(list[0].course_id, 7);
+        assert_eq!(list[0].posted_at, "2025-10-09T08:53:20+00:00");
     }
 
     #[test]
