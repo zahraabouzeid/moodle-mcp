@@ -1,11 +1,11 @@
-//! The pages where someone connects an AI app to their Moodle. The HTML is in
+//! The pages where someone connects an LLM client to their Moodle. The HTML is in
 //! `templates/`, which also escapes everything that is filled in.
 
 use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
-/// The sign-in an AI app asked for, carried from page to page.
+/// The sign-in an LLM client asked for, carried from page to page.
 pub struct Connecting<'a> {
     pub server: &'a str,
     pub app: &'a str,
