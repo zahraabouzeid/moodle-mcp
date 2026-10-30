@@ -1,5 +1,6 @@
-//! The sign-in pages. Moodle's link can come back in a different tab, or by hand
-//! from a phone, so the state of a sign-in waits here under an id of its own.
+//! The sign-in pages. Moodle's link can come back in a different tab, or by hand,
+//! so the state of a sign-in waits here under an id of its own. Phones are turned
+//! away, because their browsers cannot take Moodle's link automatically.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -8,7 +9,7 @@ use std::time::{Duration, Instant};
 use axum::extract::{Query, State};
 use axum::handler::Handler;
 use axum::http::HeaderMap;
-use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
+use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Form, Router, middleware};
@@ -156,7 +157,18 @@ const NEEDS_PKCE: [(&str, &str); 2] = [
     ("error_description", "PKCE with S256 is required"),
 ];
 
-async fn ask(State(web): State<Web>, Query(asking): Query<Asking>) -> Response {
+fn is_phone(headers: &HeaderMap) -> bool {
+    let agent = headers
+        .get(USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_lowercase();
+    ["mobi", "android", "iphone", "ipad", "ipod"]
+        .iter()
+        .any(|word| agent.contains(word))
+}
+
+async fn ask(State(web): State<Web>, headers: HeaderMap, Query(asking): Query<Asking>) -> Response {
     let Ok(app) = web.oauth.app_name(&asking.client_id, &asking.redirect_uri) else {
         return page::problem(&host_of(&web.base), NO_SUCH_APP);
     };
@@ -166,20 +178,20 @@ async fn ask(State(web): State<Web>, Query(asking): Query<Asking>) -> Response {
     if method != "S256" || !pkce_text(challenge) {
         return back_to_app(&web.base, &asking.redirect_uri, state, &NEEDS_PKCE);
     }
-    page::ask_address(
-        &Connecting {
-            server: &host_of(&web.base),
-            app: &app,
-            app_host: &host_of(&asking.redirect_uri),
-            client_id: &asking.client_id,
-            redirect_uri: &asking.redirect_uri,
-            code_challenge: challenge,
-            code_challenge_method: method,
-            state,
-        },
-        "",
-        None,
-    )
+    let connecting = Connecting {
+        server: &host_of(&web.base),
+        app: &app,
+        app_host: &host_of(&asking.redirect_uri),
+        client_id: &asking.client_id,
+        redirect_uri: &asking.redirect_uri,
+        code_challenge: challenge,
+        code_challenge_method: method,
+        state,
+    };
+    if is_phone(&headers) {
+        return page::phone(&connecting);
+    }
+    page::ask_address(&connecting, "", None)
 }
 
 async fn checked_moodle(web: &Web, address: &str) -> Result<Url> {
@@ -194,7 +206,11 @@ async fn checked_moodle(web: &Web, address: &str) -> Result<Url> {
     Ok(moodle)
 }
 
-async fn answer(State(web): State<Web>, Form(answer): Form<Answer>) -> Response {
+async fn answer(
+    State(web): State<Web>,
+    headers: HeaderMap,
+    Form(answer): Form<Answer>,
+) -> Response {
     let Ok(app) = web.oauth.app_name(&answer.client_id, &answer.redirect_uri) else {
         return page::problem(&host_of(&web.base), NO_SUCH_APP);
     };
@@ -205,6 +221,18 @@ async fn answer(State(web): State<Web>, Form(answer): Form<Answer>) -> Response 
     }
     if answer.code_challenge_method != "S256" || !pkce_text(&answer.code_challenge) {
         return back_to_app(&web.base, &answer.redirect_uri, state, &NEEDS_PKCE);
+    }
+    if is_phone(&headers) {
+        return page::phone(&Connecting {
+            server: &host_of(&web.base),
+            app: &app,
+            app_host: &host_of(&answer.redirect_uri),
+            client_id: &answer.client_id,
+            redirect_uri: &answer.redirect_uri,
+            code_challenge: &answer.code_challenge,
+            code_challenge_method: &answer.code_challenge_method,
+            state,
+        });
     }
     let address = answer.address.as_deref().unwrap_or_default();
     let started = match checked_moodle(&web, address).await {
@@ -364,6 +392,31 @@ mod tests {
         };
         let id = attempts.start(old).expect("an id");
         assert!(attempts.find(&id).is_none());
+    }
+
+    #[test]
+    fn phones_and_tablets_are_told_apart_from_computers() {
+        let agent = |text: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(USER_AGENT, text.parse().expect("a header"));
+            is_phone(&headers)
+        };
+        for phone in [
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/120.0 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 14; Tablet) Chrome/120.0 Safari/537.36",
+            "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) Safari/604.1",
+        ] {
+            assert!(agent(phone), "{phone}");
+        }
+        for computer in [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1.15",
+            "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
+        ] {
+            assert!(!agent(computer), "{computer}");
+        }
+        assert!(!is_phone(&HeaderMap::new()));
     }
 
     #[test]

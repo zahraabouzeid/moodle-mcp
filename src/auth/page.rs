@@ -26,6 +26,13 @@ struct ConnectPage<'a> {
     error: Option<&'a str>,
 }
 
+#[derive(Template)]
+#[template(path = "phone.html")]
+struct PhonePage<'a> {
+    server: &'a str,
+    connecting: &'a Connecting<'a>,
+}
+
 /// The script only offers to take Moodle's link automatically. Where a browser
 /// does not support that, the form on the page does the same job by hand.
 #[derive(Template)]
@@ -66,6 +73,14 @@ pub fn ask_address(connecting: &Connecting, address: &str, error: Option<&str>) 
         error,
     };
     answer(status_for(error), page)
+}
+
+pub fn phone(connecting: &Connecting) -> Response {
+    let page = PhonePage {
+        server: connecting.server,
+        connecting,
+    };
+    answer(StatusCode::OK, page)
 }
 
 pub fn sign_in(server: &str, attempt: &str, launch: &str, error: Option<&str>) -> Response {

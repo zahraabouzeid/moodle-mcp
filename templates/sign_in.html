@@ -8,7 +8,7 @@
 <div class="stack">
   <div class="intro">
     <h1>Sign in to Moodle</h1>
-    <p class="muted">On a computer, allow this site to open the link when the browser asks. The sign-in then finishes by itself.</p>
+    <p class="muted">Allow this site to open the link when the browser asks. The sign-in then finishes by itself.</p>
   </div>
 
   {% if let Some(error) = error %}
@@ -23,7 +23,7 @@
       <span>Link from Moodle</span>
       <input name="link" autocomplete="off" autocapitalize="none" spellcheck="false">
     </label>
-    <p class="help">On a phone, Moodle shows a link after signing in. Press and hold it, copy it and paste it here. A key from the security keys in the Moodle preferences works too. Stored encrypted.</p>
+    <p class="help">If nothing happens, copy the link Moodle shows after signing in and paste it here. A key from the security keys in the Moodle preferences works too. Stored encrypted.</p>
     <button class="outline">Connect</button>
   </form>
 </div>

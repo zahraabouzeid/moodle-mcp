@@ -337,6 +337,58 @@ async fn the_address_is_checked_and_any_moodle_can_be_entered() {
 }
 
 #[tokio::test]
+async fn a_phone_gets_a_notice_instead_of_the_sign_in_and_can_go_back() {
+    let server = start("phone").await;
+    let app = server.register().await;
+    let phone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148 Safari/604.1";
+    let path = format!(
+        "/oauth/authorize?client_id={app}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state=s1",
+        encoded(REDIRECT),
+        challenge_of(VERIFIER)
+    );
+    let request = Request::get(path)
+        .header(header::HOST, HOST)
+        .header(header::USER_AGENT, phone)
+        .body(Body::empty())
+        .expect("a request");
+    let (status, _, page) = server.call(request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Not available on phones"), "{page}");
+    assert!(!page.contains("name=\"address\""));
+
+    let challenge = challenge_of(VERIFIER);
+    let fields = [
+        ("client_id", app.as_str()),
+        ("redirect_uri", REDIRECT),
+        ("code_challenge", &challenge),
+        ("code_challenge_method", "S256"),
+        ("state", "s1"),
+        ("address", server.moodle.as_str()),
+    ];
+    let with_action = |action: &'static str| {
+        let mut all = fields.to_vec();
+        all.push(("action", action));
+        let mut request = form("/oauth/authorize", &all);
+        request
+            .headers_mut()
+            .insert(header::USER_AGENT, phone.parse().expect("a header"));
+        request
+    };
+    let (status, _, page) = server.call(with_action("allow")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("Not available on phones"),
+        "a phone cannot skip the notice"
+    );
+    assert!(!page.contains("launch.php"));
+
+    let (status, headers, _) = server.call(with_action("deny")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let back = headers[header::LOCATION].to_str().expect("text");
+    assert!(back.contains("error=access_denied"), "{back}");
+}
+
+#[tokio::test]
 async fn cancelling_goes_back_to_the_app_without_a_code() {
     let server = start("cancel").await;
     let app = server.register().await;
