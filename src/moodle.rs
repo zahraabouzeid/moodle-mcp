@@ -18,7 +18,7 @@ const FILE_PATH: &str = "webservice/pluginfile.php/";
 const LAUNCH_PATH: &str = "admin/tool/mobile/launch.php";
 const MAX_ANSWER_BYTES: usize = 20 * 1024 * 1024;
 const REJECTED: &str = "Moodle refused this login, which has probably expired. Connect it again \
-    in the AI app.";
+    in the LLM client.";
 const NOT_MOODLE: &str = "No Moodle answered at this address. Check the address.";
 const BAD_LINK: &str = "That is not the link from Moodle. Copy the whole link Moodle shows after \
     signing in, and paste it here.";

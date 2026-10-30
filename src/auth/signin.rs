@@ -28,7 +28,7 @@ const SCHEME: &str = "web+moodlemcp";
 const COOKIE_NAME: &str = "moodle_sign_in";
 const ATTEMPT_VALID: Duration = Duration::from_secs(15 * 60);
 const MAX_ATTEMPTS: usize = 1000;
-const NO_ATTEMPT: &str = "This sign-in has expired. Add the connector again in the AI app.";
+const NO_ATTEMPT: &str = "This sign-in has expired. Add the connector again in the LLM client.";
 const AUTOMATIC: &str = "\
 const button = document.getElementById(\"sign-in\");
 if (button && navigator.registerProtocolHandler) {

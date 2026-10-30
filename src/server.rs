@@ -119,7 +119,7 @@ impl CoursesServer {
 
     #[tool(
         description = "List the courses the user is enrolled in on the connected Moodle.\n\n\
-            If Moodle refuses the login, tell the user to connect it again in their AI app, and \
+            If Moodle refuses the login, tell the user to connect it again in their LLM client, and \
             never ask for a password or token in the chat.",
         annotations(read_only_hint = true, open_world_hint = true)
     )]
