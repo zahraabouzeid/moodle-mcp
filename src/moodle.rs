@@ -43,7 +43,7 @@ impl Login {
 }
 
 /// The page where the sign-in starts. `confirmed` makes Moodle show the link as
-/// well, because a phone often cannot follow it by itself.
+/// well, because not every browser can follow it by itself.
 pub fn launch_url(moodle: &Url, passport: &str, scheme: &str) -> Result<Url> {
     let mut url = moodle
         .join(LAUNCH_PATH)
