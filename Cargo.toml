@@ -1,0 +1,40 @@
+[package]
+name = "moodle-mcp"
+version = "0.1.0"
+description = "MCP server that reads your courses, files and assignments on any Moodle"
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/zahraabouzeid/moodle-mcp"
+publish = false
+
+[dependencies]
+askama = "0.16"
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+getrandom = "0.4"
+hayro = "0.8"
+md5 = "0.7"
+pdf-extract = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rmcp = { version = "3.7", features = ["server", "macros", "transport-streamable-http-server"] }
+roxmltree = "0.20"
+rusqlite = { version = "0.37", features = ["bundled"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+url = "2"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "warn"
