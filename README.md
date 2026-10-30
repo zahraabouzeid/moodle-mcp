@@ -1,14 +1,15 @@
 # Moodle MCP Server
 
 A Model Context Protocol server that provides read-only access to courses on any
-Moodle site. This server enables LLMs to list courses, files and assignments and
-to read course files.
+Moodle site. This server enables LLMs to list courses, files, assignments and
+announcements and to read course files.
 
 ## Available Tools
 
 - `list_courses` - Lists the courses the user is enrolled in.
 - `list_course_files` - Lists the files of one course.
 - `list_assignments` - Lists assignments with their deadlines.
+- `list_announcements` - Lists recent posts in the announcement forums.
 - `read_course_file` - Reads a course file as text or as page images.
 
 ## Usage
