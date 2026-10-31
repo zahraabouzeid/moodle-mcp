@@ -123,6 +123,36 @@ pub struct Assignment {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
+pub struct AssignmentFeedback {
+    pub assignment_id: u64,
+    /// Moodle's state of the submission, such as `submitted` or `new`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submission_status: Option<String>,
+    /// Moodle's state of the marking, such as `graded` or `notgraded`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grading_status: Option<String>,
+    /// Missing until a grade is released.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grade: Option<String>,
+    /// In UTC.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graded_at: Option<String>,
+    pub comments: Vec<String>,
+    pub files: Vec<FeedbackFile>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FeedbackFile {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Pass this to read_course_file.
+    pub file_ref: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Announcement {
     pub course_id: u64,
     pub subject: String,
@@ -213,6 +243,61 @@ mod wire {
         pub name: String,
         #[serde(default)]
         pub duedate: i64,
+    }
+
+    #[derive(Deserialize)]
+    pub struct SubmissionStatus {
+        pub lastattempt: Option<LastAttempt>,
+        pub feedback: Option<Feedback>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct LastAttempt {
+        pub submission: Option<Submission>,
+        pub teamsubmission: Option<Submission>,
+        pub gradingstatus: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Submission {
+        pub status: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Feedback {
+        pub gradefordisplay: Option<String>,
+        #[serde(default)]
+        pub gradeddate: i64,
+        #[serde(default)]
+        pub plugins: Vec<FeedbackPlugin>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct FeedbackPlugin {
+        #[serde(default)]
+        pub editorfields: Vec<EditorField>,
+        #[serde(default)]
+        pub fileareas: Vec<FileArea>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct EditorField {
+        #[serde(default)]
+        pub text: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct FileArea {
+        #[serde(default)]
+        pub files: Vec<AreaFile>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct AreaFile {
+        pub filename: String,
+        pub filesize: Option<u64>,
+        pub fileurl: Option<String>,
+        pub mimetype: Option<String>,
     }
 
     /// Moodle reports errors with status 200 and this body.
@@ -324,6 +409,60 @@ fn plain_text(html: &str) -> String {
         .map(|block| block.join("\n"))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn assignment_feedback(assignment_id: u64, status: wire::SubmissionStatus) -> AssignmentFeedback {
+    let (submission_status, grading_status) = match status.lastattempt {
+        Some(attempt) => (
+            attempt
+                .submission
+                .or(attempt.teamsubmission)
+                .and_then(|submission| submission.status),
+            attempt.gradingstatus,
+        ),
+        None => (None, None),
+    };
+    let mut result = AssignmentFeedback {
+        assignment_id,
+        submission_status,
+        grading_status,
+        grade: None,
+        graded_at: None,
+        comments: Vec::new(),
+        files: Vec::new(),
+    };
+    let Some(feedback) = status.feedback else {
+        return result;
+    };
+    result.grade = feedback
+        .gradefordisplay
+        .map(|grade| plain_text(&grade))
+        .filter(|grade| !grade.is_empty());
+    result.graded_at = (feedback.gradeddate > 0)
+        .then(|| DateTime::from_timestamp(feedback.gradeddate, 0))
+        .flatten()
+        .map(|time| time.to_rfc3339());
+    for plugin in feedback.plugins {
+        result.comments.extend(
+            plugin
+                .editorfields
+                .iter()
+                .map(|field| plain_text(&field.text))
+                .filter(|text| !text.is_empty()),
+        );
+        for file in plugin.fileareas.into_iter().flat_map(|area| area.files) {
+            let Some(file_ref) = file.fileurl else {
+                continue;
+            };
+            result.files.push(FeedbackFile {
+                name: file.filename,
+                size: file.filesize,
+                mime_type: file.mimetype,
+                file_ref,
+            });
+        }
+    }
+    result
 }
 
 fn announcements(course_id: u64, discussions: wire::Discussions, since: i64) -> Vec<Announcement> {
@@ -473,6 +612,16 @@ impl MoodleClient {
         Ok(assignments(result))
     }
 
+    pub async fn assignment_feedback(&self, assignment_id: u64) -> Result<AssignmentFeedback> {
+        let status: wire::SubmissionStatus = self
+            .call(
+                "mod_assign_get_submission_status",
+                &[("assignid".into(), assignment_id.to_string())],
+            )
+            .await?;
+        Ok(assignment_feedback(assignment_id, status))
+    }
+
     /// Posts in the announcement forums ("news" in Moodle) since a Unix time,
     /// newest first. Without a course, Moodle returns the forums of all courses.
     pub async fn announcements(
@@ -505,7 +654,11 @@ impl MoodleClient {
 
     /// The token is appended to this URL, so it has to be on this Moodle.
     fn checked_file_url(&self, file_ref: &str) -> Result<Url> {
-        let not_from_moodle = || MoodleError::new("file_ref is not a file from list_course_files.");
+        let not_from_moodle = || {
+            MoodleError::new(
+                "file_ref is not a file from list_course_files or read_assignment_feedback.",
+            )
+        };
         let url = Url::parse(file_ref).map_err(|_| not_from_moodle())?;
         let files = self.moodle.join(FILE_PATH).map_err(|_| not_from_moodle())?;
         if url.origin() != self.moodle.origin()
@@ -688,6 +841,47 @@ mod tests {
         assert_eq!(list[0].due_at.as_deref(), Some("2025-10-09T08:53:20+00:00"));
         assert_eq!(list[1].due_at, None);
         assert_eq!(list[1].course_id, 7);
+    }
+
+    #[test]
+    fn feedback_collects_the_grade_comments_and_files() {
+        let body = br#"{"lastattempt":{"submission":{"status":"submitted"},"gradingstatus":"graded"},
+            "feedback":{"gradefordisplay":"<b>18</b> / 20","gradeddate":1760000000,"plugins":[
+              {"type":"comments","name":"Comments","editorfields":[
+                {"name":"comments","text":"<p>Good, but check task 2.</p>"},{"name":"empty","text":""}]},
+              {"type":"file","name":"Files","fileareas":[{"area":"feedback_files","files":[
+                {"filename":"marked.pdf","filesize":10,"mimetype":"application/pdf",
+                 "fileurl":"https://moodle.example.org/webservice/pluginfile.php/1/marked.pdf"},
+                {"filename":"no link"}]}]}]}}"#;
+        let result = assignment_feedback(
+            9,
+            decode(body).map_err(|_| "not decoded").expect("a status"),
+        );
+        assert_eq!(result.submission_status.as_deref(), Some("submitted"));
+        assert_eq!(result.grading_status.as_deref(), Some("graded"));
+        assert_eq!(result.grade.as_deref(), Some("18 / 20"));
+        assert_eq!(
+            result.graded_at.as_deref(),
+            Some("2025-10-09T08:53:20+00:00")
+        );
+        assert_eq!(result.comments, ["Good, but check task 2."]);
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].name, "marked.pdf");
+    }
+
+    #[test]
+    fn an_unmarked_or_team_submission_has_no_feedback_yet() {
+        let body = br#"{"lastattempt":{"teamsubmission":{"status":"submitted"},
+            "gradingstatus":"notgraded"},"warnings":[]}"#;
+        let result = assignment_feedback(
+            9,
+            decode(body).map_err(|_| "not decoded").expect("a status"),
+        );
+        assert_eq!(result.submission_status.as_deref(), Some("submitted"));
+        assert_eq!(result.grading_status.as_deref(), Some("notgraded"));
+        assert_eq!(result.grade, None);
+        assert!(result.comments.is_empty());
+        assert!(result.files.is_empty());
     }
 
     #[test]
