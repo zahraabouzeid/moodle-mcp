@@ -1,5 +1,7 @@
 # Moodle MCP Server
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/zahraabouzeid-moodle-mcp-kqguqe?v=fb4d3501833cb5f4353c2e65a5578134)](https://m8ven.ai/mcp/zahraabouzeid-moodle-mcp-kqguqe?s=readme)
+
 A Model Context Protocol server that provides read-only access to courses on any
 Moodle site. This server enables LLMs to list courses, files, assignments and
 announcements and to read course files.
